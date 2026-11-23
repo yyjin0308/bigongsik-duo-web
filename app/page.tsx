@@ -159,11 +159,34 @@ export default function Home() {
         )}
       </main>
 
-      <footer className="duo-footer">
-        <div className="duo-container">
-          © 비공식듀오 · RED CRYSTAL
-        </div>
-      </footer>
+     
+<footer className="duo-footer">
+  <div
+    className="duo-container"
+    style={{
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: '12px',
+      flexWrap: 'wrap',
+    }}
+  >
+    <span>© 비공식듀오 · RED CRYSTAL</span>
+
+    <Link
+      href="/admin"
+      style={{
+        color: '#9b828b',
+        textDecoration: 'none',
+        fontSize: '12px',
+        fontWeight: 500,
+      }}
+    >
+      🔒 관리자 ↗
+    </Link>
+  </div>
+</footer>
+
 
       <style jsx global>{`
         .duo-page {
