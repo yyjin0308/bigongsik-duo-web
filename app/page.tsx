@@ -27,13 +27,13 @@ export default function Home() {
         if (!valid()) return;
         setSigned(!!auth.user);
         if (!auth.user) { setAccess('guest'); return; }
-        const { data: admin, error: adminError } = await client.from('admins').select('user_id').eq('user_id', auth.user.id).maybeSingle();
-        if (adminError) throw adminError;
+        const { data: admin, error: adminError } = await client.rpc('is_admin');
+        if (adminError) throw { stage: 'ADMIN', code: adminError.code };
         let nextAccess = 'admin';
         let opposite: 'female' | 'male' = 'female';
         if (!admin) {
           const { data: member, error: memberError } = await client.from('members').select('status,gender,rejection_reason').eq('user_id', auth.user.id).maybeSingle();
-          if (memberError) throw memberError;
+          if (memberError) throw { stage: 'MEMBER', code: memberError.code };
           if (!valid()) return;
           nextAccess = member?.status || 'draft';
           setReason(member?.rejection_reason || '');
@@ -43,11 +43,14 @@ export default function Home() {
         let query = client.from('profiles').select('*').eq('is_published', true).order('sort_order', { ascending: true }).order('created_at', { ascending: false });
         if (nextAccess !== 'admin') query = query.eq('gender', opposite);
         const { data, error } = await query;
-        if (error) throw error;
+        if (error) throw { stage: 'PROFILE', code: error.code };
         if (!valid()) return;
         setGender(opposite); setProfiles(data || []); setAccess(nextAccess);
-      } catch {
-        if (valid()) { setAccess('error'); setError('회원 정보 또는 프로필을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.'); }
+      } catch (err) {
+        const failure = err as { stage?: string; code?: string };
+        const stage = failure?.stage || 'UNKNOWN';
+        const code = failure?.code || 'UNKNOWN';
+        if (valid()) { setAccess('error'); setError(`회원 정보 또는 프로필을 불러오지 못했습니다. 오류 코드: ${stage}/${code}`); }
       } finally { if (valid()) setLoading(false); }
     }
     let timer: ReturnType<typeof setTimeout>;
