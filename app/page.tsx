@@ -11,21 +11,59 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
+  const [access, setAccess] = useState('loading');
+  const [reason, setReason] = useState('');
+  const [signed, setSigned] = useState(false);
   useEffect(() => {
-    supabase()
-      .from('profiles')
-      .select('*')
-      .eq('is_published', true)
-      .order('sort_order', { ascending: true })
-      .order('created_at', { ascending: false })
-      .then(({ data, error }) => {
-        if (error) {
-          setError('프로필을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.');
+    const client = supabase();
+    let active = true;
+    let version = 0;
+    async function refresh() {
+      const current = ++version;
+      const valid = () => active && current === version;
+      setLoading(true); setAccess('loading'); setProfiles([]); setError(''); setReason('');
+      try {
+        const { data: auth } = await client.auth.getUser();
+        if (!valid()) return;
+        setSigned(!!auth.user);
+        if (!auth.user) { setAccess('guest'); return; }
+        const { data: admin, error: adminError } = await client.from('admins').select('user_id').eq('user_id', auth.user.id).maybeSingle();
+        if (adminError) throw adminError;
+        let nextAccess = 'admin';
+        let opposite: 'female' | 'male' = 'female';
+        if (!admin) {
+          const { data: member, error: memberError } = await client.from('members').select('status,gender,rejection_reason').eq('user_id', auth.user.id).maybeSingle();
+          if (memberError) throw memberError;
+          if (!valid()) return;
+          nextAccess = member?.status || 'draft';
+          setReason(member?.rejection_reason || '');
+          opposite = member?.gender === 'female' ? 'male' : 'female';
+          if (nextAccess !== 'approved') { setAccess(nextAccess); return; }
         }
-        setProfiles(data || []);
-        setLoading(false);
-      });
+        let query = client.from('profiles').select('*').eq('is_published', true).order('sort_order', { ascending: true }).order('created_at', { ascending: false });
+        if (nextAccess !== 'admin') query = query.eq('gender', opposite);
+        const { data, error } = await query;
+        if (error) throw error;
+        if (!valid()) return;
+        setGender(opposite); setProfiles(data || []); setAccess(nextAccess);
+      } catch {
+        if (valid()) { setAccess('error'); setError('회원 정보 또는 프로필을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.'); }
+      } finally { if (valid()) setLoading(false); }
+    }
+    let timer: ReturnType<typeof setTimeout>;
+    const schedule = () => { ++version; setAccess('loading'); setProfiles([]); clearTimeout(timer); timer = setTimeout(refresh, 0); };
+    const { data: { subscription } } = client.auth.onAuthStateChange((event) => { if (event !== 'TOKEN_REFRESHED') schedule(); });
+    const onFocus = () => { if (document.visibilityState === 'visible') schedule(); };
+    document.addEventListener('visibilitychange', onFocus);
+    schedule();
+    return () => { active = false; clearTimeout(timer); subscription.unsubscribe(); document.removeEventListener('visibilitychange', onFocus); };
   }, []);
+
+  async function logout() {
+    const { error } = await supabase().auth.signOut();
+    if (error) { window.alert('로그아웃에 실패했습니다. 다시 시도해 주세요.'); return; }
+    window.location.replace('/');
+  }
 
   const visibleProfiles = profiles.filter(
     (profile) => profile.gender === gender
@@ -41,7 +79,9 @@ export default function Home() {
             <span className="duo-eyebrow">
               RED CRYSTAL PRESENTS
             </span>
-            <span className="duo-top-heart">♡</span>
+            <nav className="duo-account" aria-label="회원 메뉴">
+              {signed ? <><Link href={access === 'admin' ? '/admin' : '/member/status'}>{access === 'admin' ? '관리자' : '마이페이지'}</Link><button type="button" onClick={logout}>로그아웃</button></> : <><Link href="/login">로그인</Link><Link href="/signup">회원가입</Link></>}
+            </nav>
           </div>
 
           <div className="duo-hero-layout">
@@ -74,7 +114,16 @@ export default function Home() {
       </header>
 
       <main className="duo-container duo-main">
-        <div className="duo-tabs">
+        {loading ? <div className="duo-empty">회원 정보를 확인하는 중입니다.</div> : access === 'error' ? <div className="duo-empty duo-error">{error}<div className="duo-account-actions"><button className="duo-tab" onClick={() => window.location.reload()}>다시 시도</button></div></div> : access !== 'admin' && access !== 'approved' ? (
+          <div className="duo-empty duo-gate">
+            <h2>{access === 'guest' ? '새로운 인연의 시작' : access === 'pending' ? '관리자 승인 대기 중입니다' : access === 'rejected' ? '프로필 승인이 반려되었습니다' : access === 'suspended' ? '서비스 이용이 정지되었습니다' : '본인 프로필을 등록해 주세요'}</h2>
+            <p>{access === 'guest' ? '승인된 회원만 소개팅 프로필을 열람할 수 있습니다.' : access === 'pending' ? '관리자 승인 후 이성 프로필을 확인할 수 있습니다.' : access === 'rejected' || access === 'suspended' ? reason || '자세한 내용은 회원 상태를 확인해 주세요.' : '프로필 등록 및 관리자 승인 후 이용할 수 있습니다.'}</p>
+            <div className="duo-account-actions">
+              {access === 'guest' ? <><Link className="duo-tab active" href="/login">로그인</Link><Link className="duo-tab" href="/signup">회원가입</Link></> : access === 'draft' || access === 'rejected' ? <Link className="duo-tab active" href="/onboarding">{access === 'rejected' ? '프로필 재신청' : '프로필 등록'}</Link> : <Link className="duo-tab active" href="/member/status">회원 상태 확인</Link>}
+            </div>
+          </div>
+        ) : <>
+        {access === 'admin' && <div className="duo-tabs">
           <button
             type="button"
             className={`duo-tab ${gender === 'female' ? 'active' : ''}`}
@@ -92,7 +141,7 @@ export default function Home() {
           >
             ♟ 남성 프로필
           </button>
-        </div>
+        </div>}
 
         <div className="duo-section-heading">
           <div>
@@ -157,6 +206,7 @@ export default function Home() {
             ))}
           </div>
         )}
+        </>}
       </main>
 
      
@@ -189,6 +239,12 @@ export default function Home() {
 
 
       <style jsx global>{`
+        .duo-account { display:flex; gap:8px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+        .duo-account a, .duo-account button { color:white; border:1px solid #ffffff55; border-radius:20px; padding:8px 12px; background:transparent; font:inherit; font-size:12px; text-decoration:none; cursor:pointer; }
+        .duo-account-actions { display:flex; justify-content:center; gap:10px; flex-wrap:wrap; margin-top:24px; }
+        .duo-account-actions a { text-decoration:none; }
+        .duo-gate h2 { color:#321c27; margin:0 0 12px; }
+        .duo-gate p { overflow-wrap:anywhere; }
         .duo-page {
           min-height: 100vh;
           background: #fcf8f6;
