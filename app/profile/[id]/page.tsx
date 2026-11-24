@@ -8,7 +8,7 @@ import {
   useState,
 } from 'react';
 import Link from 'next/link';
-import { supabase, Profile } from '../../../lib/supabase';
+import { supabase, Profile, signProfilePhotos } from '../../../lib/supabase';
 
 export default function Detail({
   params,
@@ -25,24 +25,30 @@ export default function Detail({
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
-    let cancelled = false;
-
-    supabase()
-      .from('profiles')
-      .select('*')
-      .eq('id', id)
-      .eq('is_published', true)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (!cancelled) {
-          setP(data);
-          setLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
+    const client = supabase();
+    let active = true;
+    let version = 0;
+    let timer: ReturnType<typeof setTimeout>;
+    async function refresh() {
+      const current = ++version;
+      try {
+        const { data: auth } = await client.auth.getUser();
+        if (!auth.user) throw new Error('로그인이 필요합니다.');
+        const { data, error } = await client.from('profiles').select('*').eq('id', id).eq('is_published', true).maybeSingle();
+        if (error) throw error;
+        const profile = data as Profile | null;
+        const signed = profile ? { ...profile, photos: (await signProfilePhotos(client, profile.photos || [], !!profile.member_id)).filter(Boolean) } : null;
+        if (active && current === version) { setP(signed); if (!signed) setActivePhoto(null); }
+      } catch { if (active && current === version) { setP(null); setActivePhoto(null); } }
+      finally { if (active && current === version) setLoading(false); }
+    }
+    const schedule = () => { ++version; setP(null); setActivePhoto(null); setLoading(true); clearTimeout(timer); timer = setTimeout(refresh, 0); };
+    const { data: { subscription } } = client.auth.onAuthStateChange(event => { if (event !== 'TOKEN_REFRESHED') schedule(); });
+    const onFocus = () => { if (document.visibilityState === 'visible') schedule(); };
+    document.addEventListener('visibilitychange', onFocus);
+    const renewal = setInterval(() => { if (document.visibilityState === 'visible') void refresh(); }, 240000);
+    schedule();
+    return () => { active = false; clearTimeout(timer); clearInterval(renewal); subscription.unsubscribe(); document.removeEventListener('visibilitychange', onFocus); };
   }, [id]);
 
   const photos = p?.photos || [];

@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { supabase, Profile } from '../lib/supabase';
+import { supabase, Profile, signProfilePhotos } from '../lib/supabase';
 
 export default function Home() {
   const [gender, setGender] = useState<'female' | 'male'>('female');
@@ -45,7 +45,9 @@ export default function Home() {
         const { data, error } = await query;
         if (error) throw { stage: 'PROFILE', code: error.code };
         if (!valid()) return;
-        setGender(opposite); setProfiles(data || []); setAccess(nextAccess);
+        const signedProfiles = await Promise.all((data || []).map(async (p: Profile) => ({ ...p, photos: await signProfilePhotos(client, p.photos?.slice(0, 1) || [], !!p.member_id) })));
+        if (!valid()) return;
+        setGender(opposite); setProfiles(signedProfiles); setAccess(nextAccess);
       } catch (err) {
         const failure = err as { stage?: string; code?: string };
         const stage = failure?.stage || 'UNKNOWN';
@@ -59,7 +61,8 @@ export default function Home() {
     const onFocus = () => { if (document.visibilityState === 'visible') schedule(); };
     document.addEventListener('visibilitychange', onFocus);
     schedule();
-    return () => { active = false; clearTimeout(timer); subscription.unsubscribe(); document.removeEventListener('visibilitychange', onFocus); };
+    const renewal = setInterval(() => { if (document.visibilityState === 'visible') schedule(); }, 240000);
+    return () => { active = false; clearInterval(renewal); clearTimeout(timer); subscription.unsubscribe(); document.removeEventListener('visibilitychange', onFocus); };
   }, []);
 
   async function logout() {
